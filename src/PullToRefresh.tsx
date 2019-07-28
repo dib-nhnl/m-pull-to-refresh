@@ -1,15 +1,7 @@
-import React from 'react';
 import classNames from 'classnames';
-import { PropsType, Indicator } from './PropsType';
-
-class StaticRenderer extends React.Component<any, any> {
-  shouldComponentUpdate(nextProps: any) {
-    return nextProps.shouldUpdate;
-  }
-  render() {
-    return <div>{this.props.render()}</div>;
-  }
-}
+import * as React from 'react';
+import { IPropsType } from './PropsType';
+import StaticRenderer from './StaticRenderer';
 
 function setTransform(nodeStyle: any, value: any) {
   nodeStyle.transform = value;
@@ -37,19 +29,27 @@ try {
 const willPreventDefault = supportsPassive ? { passive: false } : false;
 // const willNotPreventDefault = supportsPassive ? { passive: true } : false;
 
-export default class PullToRefresh extends React.Component<PropsType, any> {
+type ICurrSt = 'activate' | 'deactivate' | 'release' | 'finish';
+
+interface IState {
+  currSt: ICurrSt;
+  dragOnEdge: boolean;
+}
+
+export default class PullToRefresh extends React.Component<IPropsType, IState> {
   static defaultProps = {
     prefixCls: 'rmc-pull-to-refresh',
     getScrollContainer: () => undefined,
     direction: DOWN,
     distanceToRefresh: 25,
-    indicator: INDICATOR as Indicator,
-  } as PropsType;
+    damping: 100,
+    indicator: INDICATOR,
+  };
 
   // https://github.com/yiminghe/zscroller/blob/2d97973287135745818a0537712235a39a6a62a1/src/Scroller.js#L355
   // currSt: `activate` / `deactivate` / `release` / `finish`
   state = {
-    currSt: '',
+    currSt: 'deactivate' as ICurrSt,
     dragOnEdge: false,
   };
 
@@ -60,6 +60,8 @@ export default class PullToRefresh extends React.Component<PropsType, any> {
   _startScreenY: any;
   _lastScreenY: any;
   _timer: any;
+
+  _isMounted = false;
 
   shouldUpdateChildren = false;
 
@@ -81,6 +83,7 @@ export default class PullToRefresh extends React.Component<PropsType, any> {
     setTimeout(() => {
       this.init(this.props.getScrollContainer() || this.containerRef);
       this.triggerPullToRefresh();
+      this._isMounted = true;
     });
   }
 
@@ -92,7 +95,8 @@ export default class PullToRefresh extends React.Component<PropsType, any> {
   triggerPullToRefresh = () => {
     // 在初始化时、用代码 自动 触发 pullToRefresh
     // 注意：当 direction 为 up 时，当 visible length < content length 时、则看不到效果
-    if (!this.state.dragOnEdge) {
+    // 添加this._isMounted的判断，否则组建一实例化，currSt就会是finish
+    if (!this.state.dragOnEdge && this._isMounted) {
       if (this.props.refreshing) {
         if (this.props.direction === UP) {
           this._lastScreenY = - this.props.distanceToRefresh - 1;
@@ -158,6 +162,19 @@ export default class PullToRefresh extends React.Component<PropsType, any> {
     if (direction === DOWN) {
       return ele.scrollTop <= 0;
     }
+    // 补全 branch, test 才过的了，但是实际上代码永远不会走到这里，这里为了保证代码的一致性，返回 undefined
+    return undefined;
+  }
+
+  damping = (dy: number): number => {
+    if (Math.abs(this._lastScreenY) > this.props.damping) {
+      return 0;
+    }
+
+    const ratio = Math.abs(this._ScreenY - this._startScreenY) / window.screen.height;
+    dy *= (1 - ratio) * 0.6;
+
+    return dy;
   }
 
   onTouchMove = (ele: any, e: any) => {
@@ -173,6 +190,10 @@ export default class PullToRefresh extends React.Component<PropsType, any> {
 
     if (this.isEdge(ele, direction)) {
       if (!this.state.dragOnEdge) {
+        // 当用户开始往上滑的时候isEdge还是false的话，会导致this._ScreenY不是想要的，只有当isEdge为true时，再上滑，才有意义
+        // 下面这行代码解决了上面这个问题
+        this._ScreenY = this._startScreenY = e.touches[0].screenY;
+
         this.setState({ dragOnEdge: true });
       }
       e.preventDefault();
@@ -182,7 +203,7 @@ export default class PullToRefresh extends React.Component<PropsType, any> {
 
       const _diff = Math.round(_screenY - this._ScreenY);
       this._ScreenY = _screenY;
-      this._lastScreenY += _diff;
+      this._lastScreenY += this.damping(_diff);
 
       this.setContentStyle(this._lastScreenY);
 
@@ -237,10 +258,14 @@ export default class PullToRefresh extends React.Component<PropsType, any> {
   }
 
   render() {
+    const props = { ...this.props };
+
+    delete props.damping;
+
     const {
       className, prefixCls, children, getScrollContainer,
-      direction, onRefresh, refreshing, indicator, distanceToRefresh, ...restProps,
-    } = this.props;
+      direction, onRefresh, refreshing, indicator, distanceToRefresh, ...restProps
+    } = props;
 
     const renderChildren = <StaticRenderer
       shouldUpdate={this.shouldUpdateChildren} render={() => children} />;
@@ -252,7 +277,7 @@ export default class PullToRefresh extends React.Component<PropsType, any> {
           <div className={cla} ref={el => this.contentRef = el}>
             {direction === UP ? renderChildren : null}
             <div className={`${prefixCls}-indicator`}>
-              {(indicator as any)[this.state.currSt] || (INDICATOR as any)[this.state.currSt]}
+              {indicator[this.state.currSt] || INDICATOR[this.state.currSt]}
             </div>
             {direction === DOWN ? renderChildren : null}
           </div>
